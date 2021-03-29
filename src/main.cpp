@@ -22,10 +22,12 @@
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
+// creates a topic name for a given sensor / attr pair
 std::string sensorTopic(std::string device, std::string attr) {
   return "sensors/" + device + "/" + attr;
 }
 
+// publishes a sensor value to the MQTT server
 void publish(std::string device, std::string attr, float value) {
   char val_string[8];
   dtostrf(value, 1, 2, val_string);
@@ -60,6 +62,10 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       unsigned long temperature, humidity, battery;
       char charValue[5] = {0,};
 
+      // there are 3 formats these things broadcast, depending on the firmware you use
+      // ATC is the original "custom firmware" - it's the one I prefer
+      // there's also a custom format from the PVVX firmware: https://github.com/pvvx/ATC_MiThermometer
+      // and finally the broadcast format for the stock Xiaomi firmware
       switch (strServiceData.length()) {
 
         // ATC format
