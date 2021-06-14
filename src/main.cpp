@@ -11,6 +11,8 @@
 
 #include <sstream>
 
+using namespace std;
+
 #define NETWORK_SSID  "The LAN before time"
 #define NETWORK_PASS  "password"
 #define HOSTNAME      "sauron"
@@ -22,17 +24,20 @@
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
+std::map<string,std::map<string,float>> data;
+
 // creates a topic name for a given sensor / attr pair
-std::string sensorTopic(std::string device, std::string attr) {
+string sensorTopic(string device, string attr) {
   return "sensors/" + device + "/" + attr;
 }
 
 // publishes a sensor value to the MQTT server
-void publish(std::string device, std::string attr, float value) {
+void publish(string device, string attr, float value) {
   char val_string[8];
+  data[device][attr] = value;
   dtostrf(value, 1, 2, val_string);
-  Serial.printf("publishing data to %s: %s\n", sensorTopic(device, attr).c_str(), val_string);
-  mqttClient.publish(sensorTopic(device, attr).c_str(), val_string);
+  if (DEBUG) Serial.printf("publishing data to %s: %s\n", sensorTopic(device, attr).c_str(), val_string);
+  if (!DEBUG) mqttClient.publish(sensorTopic(device, attr).c_str(), val_string);
 }
 
 /*
@@ -41,10 +46,10 @@ BLE stuff
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     if (advertisedDevice.haveName() && advertisedDevice.haveServiceData() && !advertisedDevice.getName().find(BLE_FILTER)) {
-      std::string sensorName = advertisedDevice.getName();
-      std::string strServiceData = advertisedDevice.getServiceData(0);
+      string sensorName = advertisedDevice.getName();
+      string strServiceData = advertisedDevice.getServiceData(0);
 
-      Serial.printf("\n\nAdvertised Device: %s\n", sensorName.c_str());
+      if (DEBUG) Serial.printf("\n\nAdvertised Device: %s\n", sensorName.c_str());
 
       uint8_t cServiceData[100];
       char charServiceData[100];
@@ -53,10 +58,9 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
         sprintf(&charServiceData[i*2], "%02x", cServiceData[i]);
       }
 
-      std::stringstream ss;
-      ss << "fe95" << charServiceData;
-      Serial.print("Payload:");
-      Serial.println(ss.str().c_str());
+      stringstream payload;
+      payload << "fe95" << charServiceData;
+      if (DEBUG) Serial.printf("Payload: %s\n", payload.str().c_str());
       if (DEBUG) Serial.printf("Payload length: %d\n", strServiceData.length());
 
       unsigned long temperature, humidity, battery;
@@ -130,7 +134,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 
               sprintf(charValue, "%02X%02X", cServiceData[17], cServiceData[16]);
               humidity = strtol(charValue, 0, 16);
-              publish(sensorName, "humidity", (float)humidity/10);
+              publish(sensorName, "humidity", floor((float)humidity/10));
 
               break;
           }
@@ -140,20 +144,55 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
+void mqtt_reconnect() {
+  // Loop until we're reconnected
+  while (!mqttClient.connected()) {
+    if (DEBUG) Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqttClient.connect("ESP32Client")) {
+      if (DEBUG) Serial.println("connected");
+      // Subscribe
+      // mqttClient.subscribe("esp32/output");
+    } else {
+      if (DEBUG) Serial.printf("failed, rc=%d try again in 5 seconds", mqttClient.state());
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+BLEScan* scan;
+BLEScanResults foundDevices;
+
 void bleScan() {
-  BLEScan* scan = BLEDevice::getScan(); //create new scan
+  if (DEBUG) Serial.print("\nScanning for BLE devices...");
+  scan = BLEDevice::getScan(); //create new scan
   scan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   scan->setActiveScan(true); //active scan uses more power, but get results faster
   scan->setInterval(0xA0);
   scan->setWindow(0x30);
-  BLEScanResults foundDevices = scan->start(SCAN_TIME);
+  foundDevices = scan->start(SCAN_TIME);
+  if (DEBUG) Serial.print("done\n");
 }
 
+void bleLoop(void * pvParameters){
+  if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
-/*
-webserver stuff
-*/
+  for(;;){
+    try {
+      if (!mqttClient.connected()) mqtt_reconnect();
+      mqttClient.loop();
+      bleScan();
+      // delay(SCAN_TIME * 1000);
+    } catch (int myNum) {
+      if (DEBUG) Serial.println("\nError scanning");
+    }
+  }
+}
 
+TaskHandle_t BleTask;
+
+// init webserver on port 80
 WebServer webserver(80);
 
 // reads LED state
@@ -165,36 +204,6 @@ bool led(void){
 bool led(bool state){
   digitalWrite(LED_BUILTIN, state ? HIGH : LOW);
   return led();
-}
-
-// LED state as a String
-String s_led(void){
-  return led() ? "ON" : "OFF";
-}
-
-// route: /
-void handleRoot() {
-  led(true);
-  webserver.send(200, "text/plain", "hello from esp32!");
-  led(false);
-}
-
-// route: 404
-void handleNotFound() {
-  led(true);
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += webserver.uri();
-  message += "\nMethod: ";
-  message += (webserver.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += webserver.args();
-  message += "\n";
-  for (uint8_t i = 0; i < webserver.args(); i++) {
-    message += " " + webserver.argName(i) + ": " + webserver.arg(i) + "\n";
-  }
-  webserver.send(404, "text/plain", message);
-  led(false);
 }
 
 void setup(void) {
@@ -223,11 +232,7 @@ void setup(void) {
     Serial.print(".");
   }
 
-  // wifi is connected - print debug info
-  Serial.println(""); // a vertical space
-  // really wish we could do these in one println each,
-  // but it freaks out about mixing types ¯\_(ツ)_/¯
-  Serial.printf("Connected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
+  Serial.printf("\nConnected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
 
   // init kona MQTT
   mqttClient.setServer(MQTT_SERVER, 1883);
@@ -237,64 +242,63 @@ void setup(void) {
   //set hostname
   mdns_hostname_set(HOSTNAME);
   //set default instance
-  mdns_instance_name_set("Sauron");
+  mdns_instance_name_set(HOSTNAME);
   Serial.printf("MDNS responder started at http://%s.local\n", HOSTNAME);
 
   //
   // define webserver routes
   //
-  webserver.on("/", handleRoot);
+  webserver.on("/", []() {
+    webserver.send(200, "text/plain", "hello from esp32!");
+  });
 
-  // looks like `[](){...}` is c++ speak for a lambda function
-  webserver.on("/on", []() {
+  webserver.on("/metrics", []() {
     led(true);
-    webserver.send(200, "text/plain", "LED is now " + s_led());
-  });
+    stringstream message;
 
-  webserver.on("/off", []() {
+    // not sure if these are needed by prometheus ¯\_(ツ)_/¯
+    message << "# HELP temperature Temperature of the sensor in degrees Celcius.\n# TYPE temperature gauge\n";
+    message << "# HELP humidity Relative humidity of the sensor as a percentage.\n# TYPE humidity gauge\n";
+    message << "# HELP battery Battery state of charge as a percentage.\n# TYPE battery gauge\n";
+
+    std::map<string, std::map<string, float>>::iterator itOuter;
+    std::map<string, float>::iterator itInner;
+
+    for(itOuter=data.begin(); itOuter!=data.end(); ++itOuter){
+      for(itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner){
+        message << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
+      }
+    }
+
+    webserver.send(200, "text/plain", message.str().c_str());
     led(false);
-    webserver.send(200, "text/plain", "LED is now " + s_led());
   });
 
-  webserver.on("/toggle", []() {
-    // toggle the LED
-    led(!led());
-    // send a message to the browser including the new state
-    webserver.send(200, "text/plain", "TOGGLE: LED is now " + s_led());
+  webserver.onNotFound([]() {
+    webserver.send(404, "text/plain", "Not found");
   });
 
-  webserver.onNotFound(handleNotFound);
 
   //
   // Start the web server
   //
   webserver.begin();
   Serial.println("HTTP server started");
-}
 
-void mqtt_reconnect() {
-  // Loop until we're reconnected
-  while (!mqttClient.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (mqttClient.connect("ESP32Client")) {
-      Serial.println("connected");
-      // Subscribe
-      // mqttClient.subscribe("esp32/output");
-    } else {
-      Serial.printf("failed, rc=%d try again in 5 seconds", mqttClient.state());
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
+  //
+  // Pin the Bluetooth Scanning loop to the other core
+  //
+  xTaskCreatePinnedToCore(
+    bleLoop,     /* Task function. */
+    "BleTask",   /* name of task. */
+    10000,       /* Stack size of task */
+    NULL,        /* parameter of the task */
+    1,           /* priority of the task */
+    &BleTask,    /* Task handle to keep track of created task */
+    0            /* pin task to core 0 */
+  );
 }
 
 void loop() {
-  if (!mqttClient.connected()) mqtt_reconnect();
-  mqttClient.loop();
-
   webserver.handleClient();
-  // MDNS.update(); // can't find the equiv in mdns library, do I need to do this?
-
-  bleScan();
 }
