@@ -100,7 +100,7 @@ The data is also made available via a `/metrics` endpoint in a format that [Prom
 
 ![image](https://user-images.githubusercontent.com/3444/121961502-81d34700-cd35-11eb-9349-494aa7c63eea.png)
 
-Prometheus and Grafana were easy to install locally via Homebrew:
+Prometheus and Grafana were easy to install on my Mac Mini via Homebrew:
 
 ```bash
 brew install prometheus
@@ -126,6 +126,11 @@ Then add a config to prometheus and restart:
 ```bash
 # edit your prometheus config to include the IP of your ESP32
 "${EDITOR:-nano}" $HOMEBREW_PREFIX/etc/prometheus.yml
+
+# make changes (example below)
+
+# restart prometheus
+brew services restart prometheus
 ```
 
 My `prometheus.yml` looks like this:
