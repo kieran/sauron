@@ -1048,3 +1048,16 @@ Then you can log into grafana (default user/pass is `admin`/`asmin`) and start a
 ```
  
 </details>
+
+
+## Future plans
+
+I'd also like to add outside temp / humidity data to the grafana dashboard. Rather than get an outdoor sensor, I'll probably just hit a weather API and find a way to feed that data into prometheus. I could either do the API scraping in the ESP32 and add it to the `/metrics` endpoint, or I could have a lambda function that does the API req and returns data in a prometheus-friendly format, and add that source to prometheus itself.
+
+## Observations
+
+This was kinda neat: the temperature in the kitchen is very... spiky.
+
+![image](https://user-images.githubusercontent.com/3444/121965064-7898a900-cd3a-11eb-9e3a-3b98022354f9.png)
+
+My theory is that these little temperature spikes line up with the fridge compressor turning on. (The sensor is currently on top of the fridge)
