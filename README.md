@@ -4,7 +4,7 @@
 
 Firmware for an **esp32 d1 mini** which scans for Xiaomi BLE Temperature and humidity sensors, feeding that data to downstream services.
 
-Code is set up as a [PlatformIO](https://platformio.org) project - can be build & deployed to an esp32 directly from within VS Code.
+Code is set up as a [PlatformIO](https://platformio.org) project - can be built & deployed to an esp32 directly from within VS Code.
 
 > :warning: **I'm extremely new to C++ and Arduino**: I have virtually no idea what I'm doing. Would love some `*ptrs` though ;-)
 
@@ -147,7 +147,7 @@ scrape_configs:
     - targets: ["10.0.1.150"]
 ```
 
-Then you can log into grafana (default user/pass is `admin`/`asmin`) and start adding widgets!
+Then you can log into grafana (default user/pass is `admin`/`admin`) and start adding widgets!
 
 <details>
  <summary>If you're interested, my local Grafana dashboard config:</summary>
