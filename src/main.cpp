@@ -2,7 +2,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <mDNS.h>
-#include <PubSubClient.h>
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -21,23 +20,12 @@ using namespace std;
 #define BLE_FILTER    "THS_"
 #define DEBUG         false
 
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
 
 std::map<string,std::map<string,float>> data;
 
-// creates a topic name for a given sensor / attr pair
-string sensorTopic(string device, string attr) {
-  return "sensors/" + device + "/" + attr;
-}
-
-// publishes a sensor value to the MQTT server
-void publish(string device, string attr, float value) {
-  char val_string[8];
+// records a sensor value in memory
+void record(string device, string attr, float value) {
   data[device][attr] = value;
-  dtostrf(value, 1, 2, val_string);
-  if (DEBUG) Serial.printf("publishing data to %s: %s\n", sensorTopic(device, attr).c_str(), val_string);
-  if (!DEBUG) mqttClient.publish(sensorTopic(device, attr).c_str(), val_string);
 }
 
 /*
@@ -77,17 +65,17 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
           sprintf(charValue, "%02X%02X", cServiceData[6], cServiceData[7]);
           temperature = strtol(charValue, 0, 16);
           if (DEBUG) Serial.printf("ATC Temperature: %s c\n", String((float)temperature/10,1).c_str());
-          publish(sensorName, "temperature", (float)temperature/10);
+          record(sensorName, "temperature", (float)temperature/10);
 
           sprintf(charValue, "%02X", cServiceData[8]);
           humidity = strtol(charValue, 0, 16);
           if (DEBUG) Serial.printf("ATC Humidity: %s %%\n", String((float)humidity,1).c_str());
-          publish(sensorName, "humidity", (float)humidity);
+          record(sensorName, "humidity", (float)humidity);
 
           sprintf(charValue, "%02X", cServiceData[9]);
           battery = strtol(charValue, 0, 16);
           if (DEBUG) Serial.printf("ATC Battery: %s %%\n", String((float)battery,0).c_str());
-          publish(sensorName, "battery", (float)battery);
+          record(sensorName, "battery", (float)battery);
 
           break;
 
@@ -104,7 +92,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
             case 0x04:
               sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
               temperature = strtol(charValue, 0, 16);
-              publish(sensorName, "temperature", (float)temperature/10);
+              record(sensorName, "temperature", (float)temperature/10);
 
               break;
 
@@ -113,7 +101,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
               sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
               humidity = strtol(charValue, 0, 16);
               if (DEBUG) Serial.printf("HUMIDITY_EVENT: %s, %lu\n", charValue, humidity);
-              publish(sensorName, "humidity", (float)humidity/10);
+              record(sensorName, "humidity", (float)humidity/10);
 
               break;
 
@@ -122,7 +110,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
               sprintf(charValue, "%02X", cServiceData[14]);
               battery = strtol(charValue, 0, 16);
               if (DEBUG) Serial.printf("Battery: %s %%\n", String((float)battery,0).c_str());
-              publish(sensorName, "battery", (float)battery);
+              record(sensorName, "battery", (float)battery);
 
               break;
 
@@ -130,11 +118,11 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
             case 0x0D:
               sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
               temperature = strtol(charValue, 0, 16);
-              publish(sensorName, "temperature", (float)temperature/10);
+              record(sensorName, "temperature", (float)temperature/10);
 
               sprintf(charValue, "%02X%02X", cServiceData[17], cServiceData[16]);
               humidity = strtol(charValue, 0, 16);
-              publish(sensorName, "humidity", floor((float)humidity/10));
+              record(sensorName, "humidity", floor((float)humidity/10));
 
               break;
           }
@@ -143,23 +131,6 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     }
   }
 };
-
-void mqtt_reconnect() {
-  // Loop until we're reconnected
-  while (!mqttClient.connected()) {
-    if (DEBUG) Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (mqttClient.connect("ESP32Client")) {
-      if (DEBUG) Serial.println("connected");
-      // Subscribe
-      // mqttClient.subscribe("esp32/output");
-    } else {
-      if (DEBUG) Serial.printf("failed, rc=%d try again in 5 seconds", mqttClient.state());
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
 
 BLEScan* scan;
 BLEScanResults foundDevices;
@@ -180,8 +151,6 @@ void bleLoop(void * pvParameters){
 
   for(;;){
     try {
-      if (!mqttClient.connected()) mqtt_reconnect();
-      mqttClient.loop();
       bleScan();
       // delay(SCAN_TIME * 1000);
     } catch (int myNum) {
@@ -233,9 +202,6 @@ void setup(void) {
   }
 
   Serial.printf("\nConnected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
-
-  // init kona MQTT
-  mqttClient.setServer(MQTT_SERVER, 1883);
 
   // this advertises the device locally at "sauron.local"
   mdns_init();
