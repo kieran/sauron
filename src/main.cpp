@@ -138,17 +138,10 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
-BLEScan* scan;
-BLEScanResults foundDevices;
-
 void bleScan() {
   if (DEBUG) Serial.print("\nScanning for BLE devices...");
-  scan = BLEDevice::getScan(); //create new scan
-  scan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  scan->setActiveScan(true); //active scan uses more power, but get results faster
-  scan->setInterval(0xA0);
-  scan->setWindow(0x30);
-  foundDevices = scan->start(SCAN_TIME);
+  BLEDevice::getScan()->stop(); // stop any in-progreess scans (not sure if needed)
+  BLEDevice::getScan()->start(SCAN_TIME); // scan for SCAN_TIME seconds
   if (DEBUG) Serial.print("done\n");
 }
 
@@ -199,6 +192,11 @@ void setup(void) {
 
   // init the BLE device
   BLEDevice::init("");
+  BLEScan* scan = BLEDevice::getScan(); // find or create new scan
+  scan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  scan->setActiveScan(true); //active scan uses more power, but get results faster
+  scan->setInterval(0xA0);
+  scan->setWindow(0x30);
 
   // init the wifi
   WiFi.mode(WIFI_STA);
