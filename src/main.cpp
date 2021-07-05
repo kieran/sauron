@@ -19,6 +19,7 @@ using namespace std;
 #define SCAN_TIME     10 // seconds
 #define BLE_FILTER    "THS_"
 #define DEBUG         false
+#define LOW_MEM_LIMIT 10000 // bytes
 
 
 std::map<string,std::map<string,float>> data;
@@ -146,13 +147,18 @@ void bleScan() {
   if (DEBUG) Serial.print("done\n");
 }
 
+// restart if low memory
+void restartWhenLowMem(int memoryLimit) {
+  if (memoryLimit > heap_caps_get_free_size(MALLOC_CAP_8BIT)) ESP.restart();
+}
+
 void bleLoop(void * pvParameters){
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   for(;;){
     try {
       bleScan();
-      // delay(SCAN_TIME * 1000);
+      restartWhenLowMem(LOW_MEM_LIMIT);
     } catch (int myNum) {
       if (DEBUG) Serial.println("\nError scanning");
     }
