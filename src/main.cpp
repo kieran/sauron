@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <uri/UriBraces.h>
 #include <mDNS.h>
 
 #include <BLEDevice.h>
@@ -226,6 +227,33 @@ void setup(void) {
   //
   webserver.on("/", []() {
     webserver.send(200, "text/plain", "hello from esp32!");
+  });
+
+  // /sensors/THS_OFFICE
+  // responds with JSON data, as expected by github.com/ingowalther/homebridge-advanced-http-temperature-humidity
+  webserver.on(UriBraces("/sensors/{}"), []() {
+    String sensor = webserver.pathArg(0);
+    bool prev = false;
+    led(true);
+    stringstream message;
+    message << "{";
+    if (data[sensor.c_str()]["temperature"]) {
+      if (prev) message << ",";
+      message << "\n  \"temperature\": " << data[sensor.c_str()]["temperature"];
+      prev = true;
+    }
+    if (data[sensor.c_str()]["humidity"]) {
+      if (prev) message << ",";
+      message << "\n  \"humidity\": " << data[sensor.c_str()]["humidity"];
+      prev = true;
+    }
+    if (data[sensor.c_str()]["battery"]) {
+      if (prev) message << ",";
+      message << "\n  \"battery\": " << data[sensor.c_str()]["battery"];
+    }
+    message << "\n}\n";
+    webserver.send(200, "text/plain", message.str().c_str());
+    led(false);
   });
 
   // responds with all data in a format prometheus expects
