@@ -16,11 +16,10 @@ using namespace std;
 #define NETWORK_SSID  "The LAN before time"
 #define NETWORK_PASS  "password"
 #define HOSTNAME      "sauron"
-#define MQTT_SERVER   "10.0.1.126" // the IP of your local MQTT server
 #define SCAN_TIME     10 // seconds
 #define BLE_FILTER    "THS_"
-#define DEBUG         false
 #define LOW_MEM_LIMIT 10000 // bytes
+#define DEBUG         false
 
 /*
   data[sensorName][attribute] = value
