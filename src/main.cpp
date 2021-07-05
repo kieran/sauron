@@ -21,7 +21,11 @@ using namespace std;
 #define DEBUG         false
 #define LOW_MEM_LIMIT 10000 // bytes
 
+/*
+  data[sensorName][attribute] = value
 
+  this is our global cache of values
+*/
 std::map<string,std::map<string,float>> data;
 
 // records a sensor value in memory
@@ -224,6 +228,7 @@ void setup(void) {
     webserver.send(200, "text/plain", "hello from esp32!");
   });
 
+  // responds with all data in a format prometheus expects
   webserver.on("/metrics", []() {
     led(true);
     stringstream message;
@@ -244,7 +249,7 @@ void setup(void) {
 
     for(itOuter=data.begin(); itOuter!=data.end(); ++itOuter){
       for(itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner){
-        message << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
+        if (itInner->second) message << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
       }
     }
 
@@ -255,7 +260,6 @@ void setup(void) {
   webserver.onNotFound([]() {
     webserver.send(404, "text/plain", "Not found");
   });
-
 
   //
   // Start the web server
