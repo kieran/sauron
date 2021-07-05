@@ -228,6 +228,12 @@ void setup(void) {
     led(true);
     stringstream message;
 
+    // report the free mempory on the ESP32 device
+    char mem[256];
+    snprintf(mem, sizeof mem, "%zu", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+    message << "# HELP free_memory Free memory in the ESP32.\n# TYPE free_memory gauge\n";
+    message << "free_memory " << (string)mem << '\n';
+
     // not sure if these are needed by prometheus ¯\_(ツ)_/¯
     message << "# HELP temperature Temperature of the sensor in degrees Celcius.\n# TYPE temperature gauge\n";
     message << "# HELP humidity Relative humidity of the sensor as a percentage.\n# TYPE humidity gauge\n";
