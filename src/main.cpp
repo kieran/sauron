@@ -144,9 +144,12 @@ void bleScan() {
   if (DEBUG) Serial.print("done\n");
 }
 
-// restart if low memory
-void restartWhenLowMem(int memoryLimit) {
-  if (memoryLimit > heap_caps_get_free_size(MALLOC_CAP_8BIT)) ESP.restart();
+bool lowMemory() {
+  return heap_caps_get_free_size(MALLOC_CAP_8BIT) < LOW_MEM_LIMIT;
+}
+
+bool disconnected() {
+  return WiFi.status() != WL_CONNECTED;
 }
 
 void bleLoop(void * pvParameters){
@@ -155,7 +158,10 @@ void bleLoop(void * pvParameters){
   for(;;){
     try {
       bleScan();
-      restartWhenLowMem(LOW_MEM_LIMIT);
+      if (disconnected() || lowMemory()) {
+        if (DEBUG) Serial.println("\nRestarting...");
+        ESP.restart();
+      }
     } catch (int myNum) {
       if (DEBUG) Serial.println("\nError scanning");
     }
@@ -203,7 +209,7 @@ void setup(void) {
 
   // Wait for the wifi connection
   Serial.println(""); // a vertical space
-  while (WiFi.status() != WL_CONNECTED) {
+  while (disconnected()) {
     // print 1 dot every half second while we're trying to connect
     delay(500);
     Serial.print(".");
