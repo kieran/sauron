@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <uri/UriBraces.h>
@@ -19,6 +20,7 @@ using namespace std;
 #define SCAN_TIME     10 // seconds
 #define BLE_FILTER    "THS_"
 #define LOW_MEM_LIMIT 10000 // bytes
+#define WDT_TIMEOUT   60 // seconds
 #define DEBUG         false
 
 /*
@@ -157,6 +159,7 @@ void bleLoop(void * pvParameters){
 
   for(;;){
     try {
+      esp_task_wdt_reset();
       bleScan();
       if (disconnected() || lowMemory()) {
         if (DEBUG) Serial.println("\nRestarting...");
@@ -301,6 +304,9 @@ void setup(void) {
   //
   webserver.begin();
   Serial.println("HTTP server started");
+
+  // enable panic so ESP32 restarts
+  esp_task_wdt_init(WDT_TIMEOUT, true);
 
   //
   // Pin the Bluetooth Scanning loop to the other core
