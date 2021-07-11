@@ -270,6 +270,10 @@ void setup(void) {
     message << "# HELP free_memory Free memory in the ESP32.\n# TYPE free_memory gauge\n";
     message << "free_memory " << (string)mem << '\n';
 
+    // report uptime (time since last reboot) in s
+    message << "# HELP uptime Uptime in seconds.\n# TYPE uptime counter\n";
+    message << "uptime " << int(millis() / 1000) << '\n';
+
     // not sure if these are needed by prometheus ¯\_(ツ)_/¯
     message << "# HELP temperature Temperature of the sensor in degrees Celcius.\n# TYPE temperature gauge\n";
     message << "# HELP humidity Relative humidity of the sensor as a percentage.\n# TYPE humidity gauge\n";
