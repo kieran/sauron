@@ -20,7 +20,7 @@ using namespace std;
 #define SCAN_TIME     10 // seconds
 #define BLE_FILTER    "THS_"
 #define LOW_MEM_LIMIT 10000 // bytes
-#define WDT_TIMEOUT   60 // seconds
+#define WDT_TIMEOUT   120 // seconds
 #define DEBUG         false
 
 /*
@@ -32,6 +32,7 @@ std::map<string,std::map<string,float>> data;
 
 // records a sensor value in memory
 void record(string device, string attr, float value) {
+  esp_task_wdt_reset();
   data[device][attr] = value;
 }
 
@@ -154,20 +155,13 @@ bool disconnected() {
   return WiFi.status() != WL_CONNECTED;
 }
 
-void bleLoop(void * pvParameters){
+void readLoop(void * pvParameters){
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   for(;;){
-    try {
-      esp_task_wdt_reset();
-      bleScan();
-      if (disconnected() || lowMemory()) {
-        if (DEBUG) Serial.println("\nRestarting...");
-        ESP.restart();
-      }
-    } catch (int myNum) {
-      if (DEBUG) Serial.println("\nError scanning");
-    }
+    if (lowMemory()) ESP.restart();
+
+    bleScan();
   }
 }
 
@@ -188,6 +182,7 @@ bool led(bool state){
 }
 
 void setup(void) {
+  enableLoopWDT();
 
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
@@ -307,12 +302,11 @@ void setup(void) {
 
   // enable panic so ESP32 restarts
   esp_task_wdt_init(WDT_TIMEOUT, true);
-
-  //
+  // subscribe this task to the watchdog timer
+  esp_task_wdt_add(BleTask);
   // Pin the Bluetooth Scanning loop to the other core
-  //
   xTaskCreatePinnedToCore(
-    bleLoop,     /* Task function. */
+    readLoop,    /* Task function. */
     "BleTask",   /* name of task. */
     10000,       /* Stack size of task */
     NULL,        /* parameter of the task */
@@ -323,5 +317,7 @@ void setup(void) {
 }
 
 void loop() {
+  feedLoopWDT();
+  if (disconnected()) ESP.restart();
   webserver.handleClient();
 }
