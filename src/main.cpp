@@ -10,6 +10,9 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
+#include <Wire.h>
+#include <SHTSensor.h>
+
 #include <sstream>
 
 using namespace std;
@@ -19,6 +22,7 @@ using namespace std;
 #define HOSTNAME      "sauron"
 #define SCAN_TIME     10 // seconds
 #define BLE_FILTER    "THS_"
+#define SENSOR_NAME   "THS_HALLWAY"
 #define LOW_MEM_LIMIT 10000 // bytes
 #define WDT_TIMEOUT   120 // seconds
 #define DEBUG         false
@@ -29,6 +33,14 @@ using namespace std;
   this is our global cache of values
 */
 std::map<string,std::map<string,float>> data;
+
+SHTSensor sht(SHTSensor::SHT3X);
+bool shtEnabled = false;
+
+float roundTo(float value, int prec) {
+  float pow_10 = pow(10.0f, (float)prec);
+  return round(value * pow_10) / pow_10;
+}
 
 // records a sensor value in memory
 void record(string device, string attr, float value) {
@@ -155,17 +167,25 @@ bool disconnected() {
   return WiFi.status() != WL_CONNECTED;
 }
 
+void readSensors() {
+  if (!shtEnabled) return;
+  // read local temp
+  if (!sht.readSample()) Serial.printf("read failed\n");
+  record(SENSOR_NAME, "temperature", roundTo(sht.getTemperature(),1));
+  record(SENSOR_NAME, "humidity",    roundTo(sht.getHumidity(),0));
+}
+
 void readLoop(void * pvParameters){
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   for(;;){
     if (lowMemory()) ESP.restart();
-
     bleScan();
+    readSensors();
   }
 }
 
-TaskHandle_t BleTask;
+TaskHandle_t ReadTask;
 
 // init webserver on port 80
 WebServer webserver(80);
@@ -192,6 +212,11 @@ void setup(void) {
 
   // init logging interface over serial port
   Serial.begin(115200);
+
+  // init local sensors
+  Wire.begin();
+  shtEnabled = sht.init();
+  if (shtEnabled) Serial.println("SHT sensor found");
 
   // init the BLE device
   BLEDevice::init("");
@@ -303,15 +328,16 @@ void setup(void) {
   // enable panic so ESP32 restarts
   esp_task_wdt_init(WDT_TIMEOUT, true);
   // subscribe this task to the watchdog timer
-  esp_task_wdt_add(BleTask);
-  // Pin the Bluetooth Scanning loop to the other core
+  esp_task_wdt_add(ReadTask);
+
+  // Pin the sensor loop to the other core (0)
   xTaskCreatePinnedToCore(
     readLoop,    /* Task function. */
-    "BleTask",   /* name of task. */
+    "ReadTask",  /* name of task. */
     10000,       /* Stack size of task */
     NULL,        /* parameter of the task */
     1,           /* priority of the task */
-    &BleTask,    /* Task handle to keep track of created task */
+    &ReadTask,   /* Task handle to keep track of created task */
     0            /* pin task to core 0 */
   );
 }
