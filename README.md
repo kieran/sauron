@@ -83,20 +83,9 @@ Let's follow each chunk in the following table:
 
 ## Publishing the data
 
-### MQTT 
-
-The data is publshed to an MQTT service on my Mac Mini.
-
-This Mini also runs [homebridge](https://homebridge.io) which has [a plugin](https://www.npmjs.com/package/homebridge-mqttthing) that makes the data available in my Home app.
-
-Only real-time data is reported here; no logs are kept.
-
-![image](https://user-images.githubusercontent.com/3444/121961717-c52db580-cd35-11eb-9bf2-5d7d9ecb1630.png)
-
-
 ### Prometheus / Grafana
 
-The data is also made available via a `/metrics` endpoint in a format that [Prometheus](https://prometheus.io/) (a time series metrics database) can read. Prometheus is a common source for a [Grafana](https://grafana.com) dashboard, which is sort of a swiss army bulldozer for displaying data.
+The data is made available via a `/metrics` endpoint in a format that [Prometheus](https://prometheus.io/) (a time series metrics database) can read. Prometheus is a common source for a [Grafana](https://grafana.com) dashboard, which is sort of a swiss army bulldozer for displaying data.
 
 ![image](https://user-images.githubusercontent.com/3444/121961502-81d34700-cd35-11eb-9349-494aa7c63eea.png)
 
@@ -1049,10 +1038,20 @@ Then you can log into grafana (default user/pass is `admin`/`admin`) and start a
  
 </details>
 
+### MQTT
+
+The data used to be publshed to an MQTT service on my Mac Mini, but I stopped bothering since I really only used prometheus.
+
+This Mini also runs [homebridge](https://homebridge.io) which has [a plugin](https://www.npmjs.com/package/homebridge-mqttthing) that made the data available in Apple's Home.app. TBH it was kinda annoying. Also, only real-time data was reported there; no logs were kept.
+
+![image](https://user-images.githubusercontent.com/3444/121961717-c52db580-cd35-11eb-9bf2-5d7d9ecb1630.png)
+
 
 ## Future plans
 
 I'd also like to add outside temp / humidity data to the grafana dashboard. Rather than get an outdoor sensor, I'll probably just hit a weather API and find a way to feed that data into prometheus. I could either do the API scraping in the ESP32 and add it to the `/metrics` endpoint, or I could have a lambda function that does the API req and returns data in a prometheus-friendly format, and add that source to prometheus itself.
+
+ℹ️ **UPDATE: I did this, find it here** ➡️ https://github.com/kieran/prometheus-weather
 
 ## Observations
 
@@ -1061,3 +1060,5 @@ This was kinda neat: the temperature in the kitchen is very... spiky.
 ![image](https://user-images.githubusercontent.com/3444/121965064-7898a900-cd3a-11eb-9e3a-3b98022354f9.png)
 
 My theory is that these little temperature spikes line up with the fridge compressor turning on. (The sensor is currently on top of the fridge)
+
+ℹ️ **UPDATE: Pretty sure that was the case - I moved the sensor and the temp smoothed out**
