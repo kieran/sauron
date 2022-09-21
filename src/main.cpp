@@ -10,9 +10,6 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
-#include <Wire.h>
-#include <SHTSensor.h>
-
 #include <sstream>
 
 using namespace std;
@@ -22,7 +19,6 @@ using namespace std;
 #define HOSTNAME      "sauron"
 #define SCAN_TIME     10 // seconds
 #define BLE_FILTER    "THS_"
-#define SENSOR_NAME   "THS_HALLWAY"
 #define LOW_MEM_LIMIT 10000 // bytes
 #define WDT_TIMEOUT   120 // seconds
 #define DEBUG         false
@@ -33,9 +29,6 @@ using namespace std;
   this is our global cache of values
 */
 std::map<string,std::map<string,float>> data;
-
-SHTSensor sht(SHTSensor::SHT3X);
-bool shtEnabled = false;
 
 float roundTo(float value, int prec) {
   float pow_10 = pow(10.0f, (float)prec);
@@ -53,100 +46,106 @@ BLE stuff
 */
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (advertisedDevice.haveName() && advertisedDevice.haveServiceData() && !advertisedDevice.getName().find(BLE_FILTER)) {
-      string sensorName = advertisedDevice.getName();
-      string strServiceData = advertisedDevice.getServiceData(0);
+    if (advertisedDevice.haveName() && advertisedDevice.haveServiceData()) { // && !advertisedDevice.getName().find(BLE_FILTER)
+      try {
+        string sensorName = advertisedDevice.getName();
+        string strServiceData = advertisedDevice.getServiceData(0);
 
-      if (DEBUG) Serial.printf("\n\nAdvertised Device: %s\n", sensorName.c_str());
+        if (DEBUG) Serial.printf("\n\nAdvertised Device: %s\n", sensorName.c_str());
 
-      uint8_t cServiceData[100];
-      char charServiceData[100];
-      strServiceData.copy((char *)cServiceData, strServiceData.length(), 0);
-      for (int i=0;i<strServiceData.length();i++) {
-        sprintf(&charServiceData[i*2], "%02x", cServiceData[i]);
-      }
+        uint8_t cServiceData[100];
+        char charServiceData[100];
+        strServiceData.copy((char *)cServiceData, strServiceData.length(), 0);
+        for (int i=0;i<strServiceData.length();i++) {
+          sprintf(&charServiceData[i*2], "%02x", cServiceData[i]);
+        }
 
-      stringstream payload;
-      payload << "fe95" << charServiceData;
-      if (DEBUG) Serial.printf("Payload: %s\n", payload.str().c_str());
-      if (DEBUG) Serial.printf("Payload length: %d\n", strServiceData.length());
+        stringstream payload;
+        payload << "fe95" << charServiceData;
+        if (DEBUG) Serial.printf("Payload: %s\n", payload.str().c_str());
+        if (DEBUG) Serial.printf("Payload length: %d\n", strServiceData.length());
 
-      unsigned long temperature, humidity, battery;
-      char charValue[5] = {0,};
+        signed long temperature;
+        unsigned long humidity, battery;
+        char charValue[5] = {0,};
 
-      // there are 3 formats these things broadcast, depending on the firmware you use
-      // ATC is the original "custom firmware" - it's the one I prefer
-      // there's also a custom format from the PVVX firmware: https://github.com/pvvx/ATC_MiThermometer
-      // and finally the broadcast format for the stock Xiaomi firmware
-      switch (strServiceData.length()) {
+        // there are 3 formats these things broadcast, depending on the firmware you use
+        // ATC is the original "custom firmware" - it's the one I prefer
+        // there's also a custom format from the PVVX firmware: https://github.com/pvvx/ATC_MiThermometer
+        // and finally the broadcast format for the stock Xiaomi firmware
+        switch (strServiceData.length()) {
 
-        // ATC format
-        case 13:
-          sprintf(charValue, "%02X%02X", cServiceData[6], cServiceData[7]);
-          temperature = strtol(charValue, 0, 16);
-          if (DEBUG) Serial.printf("ATC Temperature: %s c\n", String((float)temperature/10,1).c_str());
-          record(sensorName, "temperature", (float)temperature/10);
+          
+          case 13: // ATC format
+            sprintf(charValue, "%02X%02X", cServiceData[6], cServiceData[7]);
+            temperature = strtol(charValue, 0, 16);
+            if (temperature >= 0x8000) temperature -= 0xFFFF; // handle negative numbers
+            if (DEBUG) Serial.printf("ATC Temperature: %s c\n", String((float)temperature/10,1).c_str());
+            record(sensorName, "temperature", (float)temperature/10);
 
-          sprintf(charValue, "%02X", cServiceData[8]);
-          humidity = strtol(charValue, 0, 16);
-          if (DEBUG) Serial.printf("ATC Humidity: %s %%\n", String((float)humidity,1).c_str());
-          record(sensorName, "humidity", (float)humidity);
+            sprintf(charValue, "%02X", cServiceData[8]);
+            humidity = strtol(charValue, 0, 16);
+            if (DEBUG) Serial.printf("ATC Humidity: %s %%\n", String((float)humidity,1).c_str());
+            record(sensorName, "humidity", (float)humidity);
 
-          sprintf(charValue, "%02X", cServiceData[9]);
-          battery = strtol(charValue, 0, 16);
-          if (DEBUG) Serial.printf("ATC Battery: %s %%\n", String((float)battery,0).c_str());
-          record(sensorName, "battery", (float)battery);
+            sprintf(charValue, "%02X", cServiceData[9]);
+            battery = strtol(charValue, 0, 16);
+            if (DEBUG) Serial.printf("ATC Battery: %s %%\n", String((float)battery,0).c_str());
+            record(sensorName, "battery", (float)battery);
 
-          break;
+            break;
 
-        // pvvx format
-        case 15:
-          // TODO - implement https://github.com/pvvx/ATC_MiThermometer#bluetooth-advertising-formats
-          break;
+          // pvvx format
+          case 15:
+            // TODO - implement https://github.com/pvvx/ATC_MiThermometer#bluetooth-advertising-formats
+            break;
 
-        // Original Xiaomi format
-        default: // 18
+          // Original Xiaomi format
+          default: // 18
 
-          switch (cServiceData[11]) {
-            // temp only? Never see this
-            case 0x04:
-              sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
-              temperature = strtol(charValue, 0, 16);
-              record(sensorName, "temperature", (float)temperature/10);
+            switch (cServiceData[11]) {
+              // temp only? Never see this
+              case 0x04:
+                sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
+                temperature = strtol(charValue, 0, 16);
+                record(sensorName, "temperature", (float)temperature/10);
 
-              break;
+                break;
 
-            // humi only? Never see this either
-            case 0x06:
-              sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
-              humidity = strtol(charValue, 0, 16);
-              if (DEBUG) Serial.printf("HUMIDITY_EVENT: %s, %lu\n", charValue, humidity);
-              record(sensorName, "humidity", (float)humidity/10);
+              // humi only? Never see this either
+              case 0x06:
+                sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
+                humidity = strtol(charValue, 0, 16);
+                if (DEBUG) Serial.printf("HUMIDITY_EVENT: %s, %lu\n", charValue, humidity);
+                record(sensorName, "humidity", (float)humidity/10);
 
-              break;
+                break;
 
-            // battery data - this seems to be every other Xiaomi advertisement
-            case 0x0A:
-              sprintf(charValue, "%02X", cServiceData[14]);
-              battery = strtol(charValue, 0, 16);
-              if (DEBUG) Serial.printf("Battery: %s %%\n", String((float)battery,0).c_str());
-              record(sensorName, "battery", (float)battery);
+              // battery data - this seems to be every other Xiaomi advertisement
+              case 0x0A:
+                sprintf(charValue, "%02X", cServiceData[14]);
+                battery = strtol(charValue, 0, 16);
+                if (DEBUG) Serial.printf("Battery: %s %%\n", String((float)battery,0).c_str());
+                record(sensorName, "battery", (float)battery);
 
-              break;
+                break;
 
-            // temp + humi data - this seems to be every other Xiaomi advertisement
-            case 0x0D:
-              sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
-              temperature = strtol(charValue, 0, 16);
-              record(sensorName, "temperature", (float)temperature/10);
+              // temp + humi data - this seems to be every other Xiaomi advertisement
+              case 0x0D:
+                sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
+                temperature = strtol(charValue, 0, 16);
+                record(sensorName, "temperature", (float)temperature/10);
 
-              sprintf(charValue, "%02X%02X", cServiceData[17], cServiceData[16]);
-              humidity = strtol(charValue, 0, 16);
-              record(sensorName, "humidity", floor((float)humidity/10));
+                sprintf(charValue, "%02X%02X", cServiceData[17], cServiceData[16]);
+                humidity = strtol(charValue, 0, 16);
+                record(sensorName, "humidity", floor((float)humidity/10));
 
-              break;
-          }
-          break;
+                break;
+            }
+            break;
+        }
+      } catch (...) {
+        // oops
       }
     }
   }
@@ -167,21 +166,13 @@ bool disconnected() {
   return WiFi.status() != WL_CONNECTED;
 }
 
-void readSensors() {
-  if (!shtEnabled) return;
-  // read local temp
-  if (!sht.readSample()) Serial.printf("read failed\n");
-  record(SENSOR_NAME, "temperature", roundTo(sht.getTemperature(),1));
-  record(SENSOR_NAME, "humidity",    roundTo(sht.getHumidity(),0));
-}
-
 void readLoop(void * pvParameters){
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   for(;;){
     if (lowMemory()) ESP.restart();
     bleScan();
-    readSensors();
+    // readSensors();
   }
 }
 
@@ -212,11 +203,6 @@ void setup(void) {
 
   // init logging interface over serial port
   Serial.begin(115200);
-
-  // init local sensors
-  Wire.begin();
-  shtEnabled = sht.init();
-  if (shtEnabled) Serial.println("SHT sensor found");
 
   // init the BLE device
   BLEDevice::init("");
@@ -307,7 +293,7 @@ void setup(void) {
 
     for(itOuter=data.begin(); itOuter!=data.end(); ++itOuter){
       for(itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner){
-        if (itInner->second) message << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
+        message << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
       }
     }
 
