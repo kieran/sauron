@@ -45,7 +45,7 @@ BLE stuff
 */
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (advertisedDevice.haveName() && advertisedDevice.haveServiceData()) { // && !advertisedDevice.getName().find(BLE_FILTER)
+    if (advertisedDevice.haveName() && advertisedDevice.haveServiceData() && !advertisedDevice.getName().find(BLE_FILTER)) {
       try {
         string sensorName = advertisedDevice.getName();
         string strServiceData = advertisedDevice.getServiceData(0);
