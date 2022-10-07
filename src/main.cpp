@@ -37,7 +37,6 @@ float roundTo(float value, int prec) {
 
 // records a sensor value in memory
 void record(string device, string attr, float value) {
-  esp_task_wdt_reset();
   data[device][attr] = value;
 }
 
@@ -169,10 +168,17 @@ bool disconnected() {
 void readLoop(void * pvParameters){
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
+  // enable panic so ESP32 restarts
+  esp_task_wdt_init(WDT_TIMEOUT, true);
+  // subscribe this task to the watchdog timer
+  esp_task_wdt_add(NULL);
+
   for(;;){
     if (lowMemory()) ESP.restart();
+    // scan for BLE devices
     bleScan();
-    // readSensors();
+    // feed the watchdog timer
+    esp_task_wdt_reset();
   }
 }
 
@@ -193,8 +199,6 @@ bool led(bool state){
 }
 
 void setup(void) {
-  enableLoopWDT();
-
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
 
@@ -311,11 +315,6 @@ void setup(void) {
   webserver.begin();
   Serial.println("HTTP server started");
 
-  // enable panic so ESP32 restarts
-  esp_task_wdt_init(WDT_TIMEOUT, true);
-  // subscribe this task to the watchdog timer
-  esp_task_wdt_add(ReadTask);
-
   // Pin the sensor loop to the other core (0)
   xTaskCreatePinnedToCore(
     readLoop,    /* Task function. */
@@ -329,7 +328,6 @@ void setup(void) {
 }
 
 void loop() {
-  feedLoopWDT();
   if (disconnected()) ESP.restart();
   webserver.handleClient();
 }
