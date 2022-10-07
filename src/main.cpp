@@ -182,6 +182,42 @@ void readLoop(void * pvParameters){
   }
 }
 
+string deviceMetrics() {
+  stringstream ret;
+
+  // report the free mempory on the ESP32 device
+  char mem[256];
+  snprintf(mem, sizeof mem, "%zu", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+  ret << "# HELP free_memory Free memory in the ESP32.\n# TYPE free_memory gauge\n";
+  ret << "free_memory " << (string)mem << '\n';
+
+  // report uptime (time since last reboot) in s
+  ret << "# HELP uptime Uptime in seconds.\n# TYPE uptime counter\n";
+  ret << "uptime " << int(millis() / 1000) << '\n';
+
+  return ret.str();
+}
+
+string sensorMetrics() {
+  stringstream ret;
+
+  // not sure if these are needed by prometheus ¯\_(ツ)_/¯
+  ret << "# HELP temperature Temperature of the sensor in degrees Celcius.\n# TYPE temperature gauge\n";
+  ret << "# HELP humidity Relative humidity of the sensor as a percentage.\n# TYPE humidity gauge\n";
+  ret << "# HELP battery Battery state of charge as a percentage.\n# TYPE battery gauge\n";
+
+  std::map<string, std::map<string, float>>::iterator itOuter;
+  std::map<string, float>::iterator itInner;
+
+  for(itOuter=data.begin(); itOuter!=data.end(); ++itOuter){
+    for(itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner){
+      ret << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
+    }
+  }
+
+  return ret.str();
+}
+
 TaskHandle_t ReadTask;
 
 // init webserver on port 80
@@ -277,29 +313,8 @@ void setup(void) {
     led(true);
     stringstream message;
 
-    // report the free mempory on the ESP32 device
-    char mem[256];
-    snprintf(mem, sizeof mem, "%zu", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-    message << "# HELP free_memory Free memory in the ESP32.\n# TYPE free_memory gauge\n";
-    message << "free_memory " << (string)mem << '\n';
-
-    // report uptime (time since last reboot) in s
-    message << "# HELP uptime Uptime in seconds.\n# TYPE uptime counter\n";
-    message << "uptime " << int(millis() / 1000) << '\n';
-
-    // not sure if these are needed by prometheus ¯\_(ツ)_/¯
-    message << "# HELP temperature Temperature of the sensor in degrees Celcius.\n# TYPE temperature gauge\n";
-    message << "# HELP humidity Relative humidity of the sensor as a percentage.\n# TYPE humidity gauge\n";
-    message << "# HELP battery Battery state of charge as a percentage.\n# TYPE battery gauge\n";
-
-    std::map<string, std::map<string, float>>::iterator itOuter;
-    std::map<string, float>::iterator itInner;
-
-    for(itOuter=data.begin(); itOuter!=data.end(); ++itOuter){
-      for(itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner){
-        message << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
-      }
-    }
+    message << deviceMetrics();
+    message << sensorMetrics();
 
     webserver.send(200, "text/plain", message.str().c_str());
     led(false);
