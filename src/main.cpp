@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <esp_task_wdt.h>
+// #include <esp_task_wdt.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <uri/UriBraces.h>
@@ -35,19 +35,27 @@ using namespace std;
 */
 std::map<string,std::map<string,float>> data;
 
+int lastUpdate = 0;
+
 float roundTo(float value, int prec) {
   float pow_10 = pow(10.0f, (float)prec);
   return round(value * pow_10) / pow_10;
 }
 
-// records a sensor value in memory
-void record(string device, string attr, float value) {
-  data[device][attr] = value;
+int uptime() {
+  return int(millis() / 1000);
 }
 
-/*
-BLE stuff
-*/
+// records a sensor value in memory
+void record(string device, string attr, float value) {
+  // gtfo if the value is the same
+  if (data[device][attr] == value) return;
+  // write the value
+  data[device][attr] = value;
+  // feed the watchdog timer
+  lastUpdate = uptime();
+}
+
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     if (advertisedDevice.haveName() && advertisedDevice.haveServiceData() && !advertisedDevice.getName().find(BLE_FILTER)) {
@@ -169,12 +177,16 @@ void readSHT() {
     record(SHT_NAME,"temperature",sht.getTemperature());
     record(SHT_NAME,"humidity",sht.getHumidity());
   } else {
-    if (DEBUG) Serial.print("Error reading SHT sensor()\n");
+    if (DEBUG) Serial.print("Error reading SHT sensor\n");
   }
 }
 
 bool lowMemory() {
   return heap_caps_get_free_size(MALLOC_CAP_8BIT) < LOW_MEM_LIMIT;
+}
+
+bool staleData() {
+  return (uptime() - lastUpdate) > WDT_TIMEOUT;
 }
 
 bool disconnected() {
@@ -184,19 +196,13 @@ bool disconnected() {
 void readLoop(void * pvParameters) {
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
-  // enable panic so ESP32 restarts
-  esp_task_wdt_init(WDT_TIMEOUT, true);
-  // subscribe this task to the watchdog timer
-  esp_task_wdt_add(NULL);
-
-  for (;;) {
+  while (1) {
+    if (staleData()) ESP.restart();
     if (lowMemory()) ESP.restart();
     // scan for BLE devices
     bleScan();
     // read local sensor
     readSHT();
-    // feed the watchdog timer
-    esp_task_wdt_reset();
   }
 }
 
@@ -211,7 +217,7 @@ string deviceMetrics() {
 
   // report uptime (time since last reboot) in s
   ret << "# HELP uptime Uptime in seconds.\n# TYPE uptime counter\n";
-  ret << "uptime " << int(millis() / 1000) << '\n';
+  ret << "uptime " << uptime() << '\n';
 
   return ret.str();
 }
@@ -262,7 +268,7 @@ void setup(void) {
   Wire.begin();
 
   // init logging interface over serial port
-  Serial.begin(115200);
+  if (DEBUG) Serial.begin(115200);
   // let serial console settle
   delay(1000);
 
@@ -286,14 +292,14 @@ void setup(void) {
   WiFi.begin(NETWORK_SSID, NETWORK_PASS);
 
   // Wait for the wifi connection
-  Serial.println(""); // a vertical space
+  if (DEBUG) Serial.println(""); // a vertical space
   while (disconnected()) {
     // print 1 dot every half second while we're trying to connect
     delay(500);
-    Serial.print(".");
+    if (DEBUG) Serial.print(".");
   }
 
-  Serial.printf("\nConnected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
+  if (DEBUG) Serial.printf("\nConnected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
 
   // this advertises the device locally at "sauron.local"
   mdns_init();
@@ -301,7 +307,7 @@ void setup(void) {
   mdns_hostname_set(HOSTNAME);
   //set default instance
   mdns_instance_name_set(HOSTNAME);
-  Serial.printf("MDNS responder started at http://%s.local\n", HOSTNAME);
+  if (DEBUG) Serial.printf("MDNS responder started at http://%s.local\n", HOSTNAME);
 
   //
   // define webserver routes
@@ -357,7 +363,7 @@ void setup(void) {
   // Start the web server
   //
   webserver.begin();
-  Serial.println("HTTP server started");
+  if (DEBUG) Serial.println("HTTP server started");
 
   // Pin the sensor loop to the other core (0)
   xTaskCreatePinnedToCore(
