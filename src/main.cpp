@@ -1,9 +1,9 @@
 #include <Arduino.h>
-// #include <esp_task_wdt.h>
 #include <WiFi.h>
+#include <mDNS.h>
+
 #include <WebServer.h>
 #include <uri/UriBraces.h>
-#include <mDNS.h>
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -18,44 +18,76 @@ SHTSensor sht;
 
 using namespace std;
 
+// #define DEBUG true // <-- uncomment to get serial logs
+#include "log.h"
+
+// wifi credentials
 #define NETWORK_SSID  "The LAN before time"
 #define NETWORK_PASS  "password"
 #define HOSTNAME      "sauron"
-#define SCAN_TIME     10 // seconds
-#define BLE_FILTER    "THS_"
-#define LOW_MEM_LIMIT 10000 // bytes
-#define WDT_TIMEOUT   120 // seconds
-#define DEBUG         false
-#define SHT_NAME      "THS_LOCAL"
+
+// misc config
+#define SCAN_TIME     10          // BLE scan time, in seconds
+#define BLE_FILTER    "THS_"      // only attempt parsing data from sensors with this name prefix
+#define LOW_MEM_LIMIT 10000       // min free bytes
+#define WDT_TIMEOUT   120         // max time since last reading (in seconds)
+#define SHT_NAME      "THS_LOCAL" // sensor name for the onboard THS sensor
 
 /*
-  data[sensorName][attribute] = value
+  this is our global store of sensor values
 
-  this is our global cache of values
+  data = {
+    THS_OFFICE: {
+      temperature: 22.5, // degrees, c
+      humidity: 80.0,    // percent, rel humi
+      battery: 65.0      // percent, charge remaining
+    },
+    ...
+  }
 */
 std::map<string,std::map<string,float>> data;
 
-int lastUpdate = 0;
+int lastUpdate = 0; // uptime at which we last recorded data
 
-float roundTo(float value, int prec) {
-  float pow_10 = pow(10.0f, (float)prec);
-  return round(value * pow_10) / pow_10;
+int uptime() { // uptime in seconds
+  return int(millis() / 1000);
 }
 
-int uptime() {
-  return int(millis() / 1000);
+bool lowMemory() { // are we running out of memory?
+  return heap_caps_get_free_size(MALLOC_CAP_8BIT) < LOW_MEM_LIMIT;
+}
+
+bool bleStuck() { // is the bluetooth scanner stuck again?
+  return (uptime() - lastUpdate) > WDT_TIMEOUT;
+}
+
+bool disconnected() { // did we lose wifi?
+  return WiFi.status() != WL_CONNECTED;
+}
+
+bool led(void) { // reads LED state
+
+  return digitalRead(LED_BUILTIN) == HIGH;
+}
+
+bool led(bool state) { // writes LED state
+  digitalWrite(LED_BUILTIN, state ? HIGH : LOW);
+  return led();
 }
 
 // records a sensor value in memory
 void record(string device, string attr, float value) {
   // gtfo if the value is the same
-  if (data[device][attr] == value) return;
-  // write the value
-  data[device][attr] = value;
+  // if (data[device][attr] == value) return; // not sure if I need this yet, don't know where the BLE stuff freezes...
+
   // feed the watchdog timer
   lastUpdate = uptime();
+
+  // write the value
+  data[device][attr] = value;
 }
 
+// callbacks for when BLE finds a devince
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     if (advertisedDevice.haveName() && advertisedDevice.haveServiceData() && !advertisedDevice.getName().find(BLE_FILTER)) {
@@ -63,7 +95,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
         string sensorName = advertisedDevice.getName();
         string strServiceData = advertisedDevice.getServiceData(0);
 
-        if (DEBUG) Serial.printf("\n\nAdvertised Device: %s\n", sensorName.c_str());
+        logf("\n\nAdvertised Device: %s\n", sensorName.c_str());
 
         uint8_t cServiceData[100];
         char charServiceData[100];
@@ -74,8 +106,8 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 
         stringstream payload;
         payload << "fe95" << charServiceData;
-        if (DEBUG) Serial.printf("Payload: %s\n", payload.str().c_str());
-        if (DEBUG) Serial.printf("Payload length: %d\n", strServiceData.length());
+        logf("Payload: %s\n", payload.str().c_str());
+        logf("Payload length: %d\n", strServiceData.length());
 
         signed long temperature;
         unsigned long humidity, battery;
@@ -86,23 +118,22 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
         // there's also a custom format from the PVVX firmware: https://github.com/pvvx/ATC_MiThermometer
         // and finally the broadcast format for the stock Xiaomi firmware
         switch (strServiceData.length()) {
-
           
           case 13: // ATC format
             sprintf(charValue, "%02X%02X", cServiceData[6], cServiceData[7]);
             temperature = strtol(charValue, 0, 16);
             if (temperature >= 0x8000) temperature -= 0xFFFF; // handle negative numbers
-            if (DEBUG) Serial.printf("ATC Temperature: %s c\n", String((float)temperature/10,1).c_str());
+            logf("ATC Temperature: %s c\n", String((float)temperature/10,1).c_str());
             record(sensorName, "temperature", (float)temperature/10);
 
             sprintf(charValue, "%02X", cServiceData[8]);
             humidity = strtol(charValue, 0, 16);
-            if (DEBUG) Serial.printf("ATC Humidity: %s %%\n", String((float)humidity,1).c_str());
+            logf("ATC Humidity: %s %%\n", String((float)humidity,1).c_str());
             record(sensorName, "humidity", (float)humidity);
 
             sprintf(charValue, "%02X", cServiceData[9]);
             battery = strtol(charValue, 0, 16);
-            if (DEBUG) Serial.printf("ATC Battery: %s %%\n", String((float)battery,0).c_str());
+            logf("ATC Battery: %s %%\n", String((float)battery,0).c_str());
             record(sensorName, "battery", (float)battery);
 
             break;
@@ -128,7 +159,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
               case 0x06:
                 sprintf(charValue, "%02X%02X", cServiceData[15], cServiceData[14]);
                 humidity = strtol(charValue, 0, 16);
-                if (DEBUG) Serial.printf("HUMIDITY_EVENT: %s, %lu\n", charValue, humidity);
+                logf2("HUMIDITY_EVENT: %s, %lu\n", charValue, humidity);
                 record(sensorName, "humidity", (float)humidity/10);
 
                 break;
@@ -137,7 +168,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
               case 0x0A:
                 sprintf(charValue, "%02X", cServiceData[14]);
                 battery = strtol(charValue, 0, 16);
-                if (DEBUG) Serial.printf("Battery: %s %%\n", String((float)battery,0).c_str());
+                logf("Battery: %s %%\n", String((float)battery,0).c_str());
                 record(sensorName, "battery", (float)battery);
 
                 break;
@@ -163,41 +194,30 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
+// scan for BLE sensors
 void bleScan() {
-  if (DEBUG) Serial.print("\nScanning for BLE devices...");
+  log("\nScanning for BLE devices...");
   BLEDevice::getScan()->stop(); // stop any in-progreess scans (not sure if needed)
   BLEDevice::getScan()->start(SCAN_TIME); // scan for SCAN_TIME seconds
-  if (DEBUG) Serial.print("done\n");
+  log("done\n");
 }
 
+// read local SHT sensor
 void readSHT() {
-  if (sht.readSample()) {
-    if (DEBUG) Serial.printf("SHT Temperature: %s c\n", String(sht.getTemperature(),1).c_str());
-    if (DEBUG) Serial.printf("SHT Humidity: %s %%\n", String(sht.getHumidity(),1).c_str());
-    record(SHT_NAME,"temperature",sht.getTemperature());
-    record(SHT_NAME,"humidity",sht.getHumidity());
-  } else {
-    if (DEBUG) Serial.print("Error reading SHT sensor\n");
-  }
+  log("\nReading local SHT sensor...");
+  if (!sht.readSample()) return;
+  logf("SHT Temperature: %s c\n", String(sht.getTemperature(),1).c_str());
+  record(SHT_NAME,"temperature",sht.getTemperature());
+  logf("SHT Humidity: %s %%\n", String(sht.getHumidity(),1).c_str());
+  record(SHT_NAME,"humidity",sht.getHumidity());
 }
 
-bool lowMemory() {
-  return heap_caps_get_free_size(MALLOC_CAP_8BIT) < LOW_MEM_LIMIT;
-}
-
-bool staleData() {
-  return (uptime() - lastUpdate) > WDT_TIMEOUT;
-}
-
-bool disconnected() {
-  return WiFi.status() != WL_CONNECTED;
-}
-
+// Main sensor read loop - read all the things
 void readLoop(void * pvParameters) {
-  if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
+  logf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   while (1) {
-    if (staleData()) ESP.restart();
+    if (bleStuck()) ESP.restart();
     if (lowMemory()) ESP.restart();
     // scan for BLE devices
     bleScan();
@@ -206,6 +226,7 @@ void readLoop(void * pvParameters) {
   }
 }
 
+// Prometheus device metrics
 string deviceMetrics() {
   stringstream ret;
 
@@ -219,9 +240,16 @@ string deviceMetrics() {
   ret << "# HELP uptime Uptime in seconds.\n# TYPE uptime counter\n";
   ret << "uptime " << uptime() << '\n';
 
+  #ifdef DEBUG
+  // report lag (time since last reboot) in s
+  ret << "# HELP lag Time since last reading in seconds.\n# TYPE lag gauge\n";
+  ret << "lag " << uptime() - lastUpdate << '\n';
+  #endif
+
   return ret.str();
 }
 
+// Prometheus sensor metrics
 string sensorMetrics() {
   stringstream ret;
 
@@ -247,17 +275,6 @@ TaskHandle_t ReadTask;
 // init webserver on port 80
 WebServer webserver(80);
 
-// reads LED state
-bool led(void) {
-  return digitalRead(LED_BUILTIN) == HIGH;
-}
-
-// writes LED state
-bool led(bool state) {
-  digitalWrite(LED_BUILTIN, state ? HIGH : LOW);
-  return led();
-}
-
 void setup(void) {
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
@@ -267,16 +284,17 @@ void setup(void) {
   // init i2c
   Wire.begin();
 
-  // init logging interface over serial port
-  if (DEBUG) Serial.begin(115200);
-  // let serial console settle
-  delay(1000);
+  // init logging interface over serial port, if we're debugging
+  #ifdef DEBUG
+  Serial.begin(115200);
+  delay(1000); // let serial console "settle"
+  #endif
 
   if (sht.init()) {
-      if (DEBUG) Serial.print("SHT init(): success\n");
+      log("SHT init(): success\n");
       sht.setAccuracy(SHTSensor::SHT_ACCURACY_MEDIUM); // only supported by SHT3x
   } else {
-      if (DEBUG) Serial.print("SHT init(): failed - no SHT sensor installed?\n");
+      log("SHT init(): failed - no SHT sensor installed?\n");
   }
 
   // init the BLE device
@@ -285,29 +303,26 @@ void setup(void) {
   scan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
   scan->setActiveScan(true); //active scan uses more power, but get results faster
   scan->setInterval(0xA0);
-  scan->setWindow(0x30);
+  scan->setWindow(0x99);
 
   // init the wifi
   WiFi.mode(WIFI_STA);
   WiFi.begin(NETWORK_SSID, NETWORK_PASS);
 
   // Wait for the wifi connection
-  if (DEBUG) Serial.println(""); // a vertical space
+  log("\n"); // a vertical space
   while (disconnected()) {
     // print 1 dot every half second while we're trying to connect
     delay(500);
-    if (DEBUG) Serial.print(".");
+    log(".");
   }
+  logf2("\nConnected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
 
-  if (DEBUG) Serial.printf("\nConnected to %s\nIP address: %s\n", NETWORK_SSID, WiFi.localIP().toString().c_str());
-
-  // this advertises the device locally at "sauron.local"
+  // this advertises the device locally at "sauron.local" (or whatever you set as your HOSTNAME)
   mdns_init();
-  //set hostname
-  mdns_hostname_set(HOSTNAME);
-  //set default instance
-  mdns_instance_name_set(HOSTNAME);
-  if (DEBUG) Serial.printf("MDNS responder started at http://%s.local\n", HOSTNAME);
+  mdns_hostname_set(HOSTNAME); // set hostname
+  mdns_instance_name_set(HOSTNAME); // set default instance - I have no idea what this does
+  logf("MDNS responder started at http://%s.local\n", HOSTNAME);
 
   //
   // define webserver routes
@@ -363,7 +378,7 @@ void setup(void) {
   // Start the web server
   //
   webserver.begin();
-  if (DEBUG) Serial.println("HTTP server started");
+  log("HTTP server started\n");
 
   // Pin the sensor loop to the other core (0)
   xTaskCreatePinnedToCore(
