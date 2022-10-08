@@ -10,6 +10,10 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
+#include <Wire.h>
+#include "SHTSensor.h"
+SHTSensor sht;
+
 #include <sstream>
 
 using namespace std;
@@ -22,6 +26,7 @@ using namespace std;
 #define LOW_MEM_LIMIT 10000 // bytes
 #define WDT_TIMEOUT   120 // seconds
 #define DEBUG         false
+#define SHT_NAME      "THS_LOCAL"
 
 /*
   data[sensorName][attribute] = value
@@ -157,6 +162,17 @@ void bleScan() {
   if (DEBUG) Serial.print("done\n");
 }
 
+void readSHT() {
+  if (sht.readSample()) {
+    if (DEBUG) Serial.printf("SHT Temperature: %s c\n", String(sht.getTemperature(),1).c_str());
+    if (DEBUG) Serial.printf("SHT Humidity: %s %%\n", String(sht.getHumidity(),1).c_str());
+    record(SHT_NAME,"temperature",sht.getTemperature());
+    record(SHT_NAME,"humidity",sht.getHumidity());
+  } else {
+    if (DEBUG) Serial.print("Error reading SHT sensor()\n");
+  }
+}
+
 bool lowMemory() {
   return heap_caps_get_free_size(MALLOC_CAP_8BIT) < LOW_MEM_LIMIT;
 }
@@ -165,7 +181,7 @@ bool disconnected() {
   return WiFi.status() != WL_CONNECTED;
 }
 
-void readLoop(void * pvParameters){
+void readLoop(void * pvParameters) {
   if (DEBUG) Serial.printf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   // enable panic so ESP32 restarts
@@ -173,10 +189,12 @@ void readLoop(void * pvParameters){
   // subscribe this task to the watchdog timer
   esp_task_wdt_add(NULL);
 
-  for(;;){
+  for (;;) {
     if (lowMemory()) ESP.restart();
     // scan for BLE devices
     bleScan();
+    // read local sensor
+    readSHT();
     // feed the watchdog timer
     esp_task_wdt_reset();
   }
@@ -209,8 +227,8 @@ string sensorMetrics() {
   std::map<string, std::map<string, float>>::iterator itOuter;
   std::map<string, float>::iterator itInner;
 
-  for(itOuter=data.begin(); itOuter!=data.end(); ++itOuter){
-    for(itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner){
+  for (itOuter=data.begin(); itOuter!=data.end(); ++itOuter) {
+    for (itInner=itOuter->second.begin(); itInner!=itOuter->second.end(); ++itInner) {
       ret << itInner->first << "{sensor=\"" << itOuter->first << "\"} " << itInner->second << '\n';
     }
   }
@@ -224,12 +242,12 @@ TaskHandle_t ReadTask;
 WebServer webserver(80);
 
 // reads LED state
-bool led(void){
+bool led(void) {
   return digitalRead(LED_BUILTIN) == HIGH;
 }
 
 // writes LED state
-bool led(bool state){
+bool led(bool state) {
   digitalWrite(LED_BUILTIN, state ? HIGH : LOW);
   return led();
 }
@@ -237,12 +255,23 @@ bool led(bool state){
 void setup(void) {
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
-
   // turn the LED off (it defaults to on)
   led(false);
 
+  // init i2c
+  Wire.begin();
+
   // init logging interface over serial port
   Serial.begin(115200);
+  // let serial console settle
+  delay(1000);
+
+  if (sht.init()) {
+      if (DEBUG) Serial.print("SHT init(): success\n");
+      sht.setAccuracy(SHTSensor::SHT_ACCURACY_MEDIUM); // only supported by SHT3x
+  } else {
+      if (DEBUG) Serial.print("SHT init(): failed - no SHT sensor installed?\n");
+  }
 
   // init the BLE device
   BLEDevice::init("");
