@@ -78,7 +78,7 @@ bool led(bool state) { // writes LED state
 // records a sensor value in memory
 void record(string device, string attr, float value) {
   // gtfo if the value is the same
-  // if (data[device][attr] == value) return; // not sure if I need this yet, don't know where the BLE stuff freezes...
+  if (data[device][attr] == value) return;
 
   // feed the watchdog timer
   lastUpdate = uptime();
