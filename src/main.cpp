@@ -217,12 +217,8 @@ void readLoop(void * pvParameters) {
   logf("BLE Loop running on core %d\n", xPortGetCoreID());
 
   while (1) {
-    if (bleStuck()) ESP.restart();
-    if (lowMemory()) ESP.restart();
-    // scan for BLE devices
-    bleScan();
-    // read local sensor
-    readSHT();
+    bleScan(); // scan for BLE devices
+    readSHT(); // read local sensor
   }
 }
 
@@ -276,6 +272,8 @@ TaskHandle_t ReadTask;
 WebServer webserver(80);
 
 void setup(void) {
+  enableLoopWDT();
+
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
   // turn the LED off (it defaults to on)
@@ -393,6 +391,9 @@ void setup(void) {
 }
 
 void loop() {
+  if (bleStuck())     ESP.restart();
+  if (lowMemory())    ESP.restart();
   if (disconnected()) ESP.restart();
+  feedLoopWDT();
   webserver.handleClient();
 }
