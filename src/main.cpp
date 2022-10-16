@@ -195,11 +195,12 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 };
 
 // scan for BLE sensors
+void bleScan();
+void bleScan(BLEScanResults) { bleScan(); } // callback version
 void bleScan() {
   log("\nScanning for BLE devices...");
   BLEDevice::getScan()->stop(); // stop any in-progreess scans (not sure if needed)
-  BLEDevice::getScan()->start(SCAN_TIME); // scan for SCAN_TIME seconds
-  log("done\n");
+  BLEDevice::getScan()->start(SCAN_TIME, &bleScan, false); // scan for SCAN_TIME seconds
 }
 
 // read local SHT sensor
@@ -210,16 +211,6 @@ void readSHT() {
   record(SHT_NAME,"temperature",sht.getTemperature());
   logf("SHT Humidity: %s %%\n", String(sht.getHumidity(),1).c_str());
   record(SHT_NAME,"humidity",sht.getHumidity());
-}
-
-// Main sensor read loop - read all the things
-void readLoop(void * pvParameters) {
-  logf("BLE Loop running on core %d\n", xPortGetCoreID());
-
-  while (1) {
-    bleScan(); // scan for BLE devices
-    readSHT(); // read local sensor
-  }
 }
 
 // Prometheus device metrics
@@ -272,7 +263,7 @@ TaskHandle_t ReadTask;
 WebServer webserver(80);
 
 void setup(void) {
-  enableLoopWDT();
+  enableLoopWDT(); // init watchdog timer
 
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
@@ -302,6 +293,7 @@ void setup(void) {
   scan->setActiveScan(true); //active scan uses more power, but get results faster
   scan->setInterval(0xA0);
   scan->setWindow(0x99);
+  bleScan(); // kick off the BLE scan (recursive)
 
   // init the wifi
   WiFi.mode(WIFI_STA);
@@ -377,23 +369,13 @@ void setup(void) {
   //
   webserver.begin();
   log("HTTP server started\n");
-
-  // Pin the sensor loop to the other core (0)
-  xTaskCreatePinnedToCore(
-    readLoop,    /* Task function. */
-    "ReadTask",  /* name of task. */
-    10000,       /* Stack size of task */
-    NULL,        /* parameter of the task */
-    1,           /* priority of the task */
-    &ReadTask,   /* Task handle to keep track of created task */
-    0            /* pin task to core 0 */
-  );
 }
 
 void loop() {
+  // The ol' IT fix
   if (bleStuck())     ESP.restart();
   if (lowMemory())    ESP.restart();
   if (disconnected()) ESP.restart();
-  feedLoopWDT();
+  feedLoopWDT(); // feed watchdog timer
   webserver.handleClient();
 }
