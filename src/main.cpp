@@ -1,9 +1,14 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <mDNS.h>
 
-#include <WebServer.h>
-#include <uri/UriBraces.h>
+#include "AsyncJson.h"
+#include <ArduinoJson.h>
+
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+
+#include <mDNS.h>
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -66,7 +71,6 @@ bool disconnected() { // did we lose wifi?
 }
 
 bool led(void) { // reads LED state
-
   return digitalRead(LED_BUILTIN) == HIGH;
 }
 
@@ -257,21 +261,18 @@ string sensorMetrics() {
   return ret.str();
 }
 
-TaskHandle_t ReadTask;
-
 // init webserver on port 80
-WebServer webserver(80);
+AsyncWebServer webserver(80);
 
 void setup(void) {
   enableLoopWDT(); // init watchdog timer
+
+  AsyncElegantOTA.begin(&webserver);    // Start AsyncElegantOTA
 
   // set the internal LED as an output - not sure why?
   pinMode(LED_BUILTIN, OUTPUT);
   // turn the LED off (it defaults to on)
   led(false);
-
-  // init i2c
-  Wire.begin();
 
   // init logging interface over serial port, if we're debugging
   #ifdef DEBUG
@@ -279,11 +280,14 @@ void setup(void) {
   delay(1000); // let serial console "settle"
   #endif
 
+  // init i2c
+  Wire.begin();
+
   if (sht.init()) {
-      log("SHT init(): success\n");
-      sht.setAccuracy(SHTSensor::SHT_ACCURACY_MEDIUM); // only supported by SHT3x
+    log("SHT init(): success\n");
+    sht.setAccuracy(SHTSensor::SHT_ACCURACY_MEDIUM); // only supported by SHT3x
   } else {
-      log("SHT init(): failed - no SHT sensor installed?\n");
+    log("SHT init(): failed - no SHT sensor installed?\n");
   }
 
   // init the BLE device
@@ -317,51 +321,43 @@ void setup(void) {
   //
   // define webserver routes
   //
-  webserver.on("/", []() {
-    webserver.send(200, "text/plain", "hello from esp32!");
+  webserver.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(200, "text/plain", "Hello from ESP32!");
   });
 
   // /sensors/THS_OFFICE
   // responds with JSON data, as expected by github.com/ingowalther/homebridge-advanced-http-temperature-humidity
-  webserver.on(UriBraces("/sensors/{}"), []() {
-    String sensor = webserver.pathArg(0);
-    bool prev = false;
+  webserver.on("^\\/sensors\\/([a-zA-Z_]+)$", HTTP_GET, [](AsyncWebServerRequest *request){
     led(true);
+    String sensor = request->pathArg(0);
     stringstream message;
-    message << "{";
-    if (data[sensor.c_str()]["temperature"]) {
-      if (prev) message << ",";
-      message << "\n  \"temperature\": " << data[sensor.c_str()]["temperature"];
-      prev = true;
-    }
-    if (data[sensor.c_str()]["humidity"]) {
-      if (prev) message << ",";
-      message << "\n  \"humidity\": " << data[sensor.c_str()]["humidity"];
-      prev = true;
-    }
-    if (data[sensor.c_str()]["battery"]) {
-      if (prev) message << ",";
-      message << "\n  \"battery\": " << data[sensor.c_str()]["battery"];
-    }
-    message << "\n}\n";
-    webserver.send(200, "text/plain", message.str().c_str());
+    DynamicJsonDocument doc(1024);
+
+    doc["temperature"] = data[sensor.c_str()]["temperature"];
+    doc["humidity"] = data[sensor.c_str()]["humidity"];
+    doc["battery"] = data[sensor.c_str()]["battery"];
+
+    serializeJson(doc, message);
+
+    request->send(200, "application/json", message.str().c_str());
+
     led(false);
   });
 
   // responds with all data in a format prometheus expects
-  webserver.on("/metrics", []() {
+  webserver.on("/metrics", [](AsyncWebServerRequest *request) {
     led(true);
     stringstream message;
 
     message << deviceMetrics();
     message << sensorMetrics();
 
-    webserver.send(200, "text/plain", message.str().c_str());
+    request->send(200, "text/plain", message.str().c_str());
     led(false);
   });
 
-  webserver.onNotFound([]() {
-    webserver.send(404, "text/plain", "Not found");
+  webserver.onNotFound([](AsyncWebServerRequest *request){
+    request->send(404, "text/plain", "Not found");
   });
 
   //
@@ -377,5 +373,4 @@ void loop() {
   if (lowMemory())    ESP.restart();
   if (disconnected()) ESP.restart();
   feedLoopWDT(); // feed watchdog timer
-  webserver.handleClient();
 }
